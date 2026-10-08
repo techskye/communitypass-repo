@@ -1,0 +1,92 @@
+# Local development / single-VPS stack.
+#   docker compose up -d --build                     # start everything
+#   docker compose --profile demo run --rm seed       # load demo data (APP_MODE=demo only)
+name: communitypass
+
+x-backend: &backend
+  build: { context: ., target: backend }
+  image: communitypass-backend
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER:-communitypass}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-communitypass}
+    REDIS_URL: redis://redis:6379
+    UPLOAD_DIR: /app/uploads
+    npm_config_update_notifier: "false"
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-communitypass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-communitypass}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-communitypass} -d ${POSTGRES_DB:-communitypass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    command: ["sh", "-c", "cd packages/core && npx prisma migrate deploy"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  seed:
+    <<: *backend
+    restart: "no"
+    profiles: [demo]
+    command: ["sh", "-c", "cd packages/core && npx tsx prisma/seed.ts"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  api:
+    <<: *backend
+    command: ["node", "apps/api/dist/main.js"]
+    volumes: [uploads:/app/uploads]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports: ["127.0.0.1:4000:4000"]
+
+  worker:
+    <<: *backend
+    command: ["node", "apps/worker/dist/main.js"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    build: { context: ., target: web }
+    image: communitypass-web
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["127.0.0.1:3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

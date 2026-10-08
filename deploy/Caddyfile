@@ -1,0 +1,15 @@
+{$DOMAIN} {
+	encode gzip
+	# API (incl. webhooks) goes straight to NestJS: real client IPs + untouched raw bodies.
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:4000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

@@ -1,0 +1,26 @@
+# VPS overlay: adds Caddy (automatic HTTPS) in front of web + api and closes host ports.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  api:
+    ports: !reset []
+    environment:
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      NODE_ENV: production
+  web:
+    ports: !reset []
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [web, api]
+    restart: unless-stopped
+
+volumes:
+  caddydata:
+  caddyconfig:

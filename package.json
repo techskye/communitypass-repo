@@ -2,9 +2,11 @@
   "name": "communitypass",
   "private": true,
   "version": "0.1.0",
-  "description": "CommunityPass — WhatsApp community membership manager for Nigerian creators (MVP)",
+  "description": "CommunityPass \u2014 WhatsApp community membership manager for Nigerian creators (MVP)",
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "pnpm -r --filter ./packages/** run build && pnpm -r --filter ./apps/** run build",
     "build:packages": "pnpm --filter @communitypass/shared run build && pnpm --filter @communitypass/core run build",
@@ -17,6 +19,9 @@
     "dev:worker": "pnpm --filter @communitypass/worker run dev",
     "dev:web": "pnpm --filter @communitypass/web run dev",
     "test": "pnpm --filter @communitypass/shared run test && pnpm --filter @communitypass/core run test && pnpm --filter @communitypass/api run test",
-    "test:e2e-demo": "pnpm --filter @communitypass/api run test:e2e-demo"
+    "test:e2e-demo": "pnpm --filter @communitypass/api run test:e2e-demo",
+    "pretest": "pnpm run build:packages",
+    "pretest:e2e-demo": "pnpm run build:packages",
+    "test:all": "pnpm test && pnpm test:e2e-demo"
   }
 }

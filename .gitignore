@@ -9,3 +9,4 @@ uploads/
 coverage/
 backups/
 next-env.d.ts
+dump.rdb
