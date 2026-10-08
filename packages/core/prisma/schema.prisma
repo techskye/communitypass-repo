@@ -1,0 +1,822 @@
+// CommunityPass data model.
+// Conventions: all timestamps are stored in UTC; money is integer kobo; every tenant-owned
+// row carries organizationId and is indexed by it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Identity & sessions ─────────────────────────────
+
+model User {
+  id              String              @id @default(cuid())
+  email           String              @unique
+  name            String
+  passwordHash    String
+  isPlatformAdmin Boolean             @default(false)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  staff           OrganizationStaff[]
+  sessions        Session[]
+
+  @@map("users")
+}
+
+/// A person who buys memberships. One account (by email) can hold memberships with many creators.
+model MemberAccount {
+  id         String           @id @default(cuid())
+  email      String           @unique
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  members    Member[]
+  sessions   Session[]
+  magicLinks MagicLinkToken[]
+
+  @@map("member_accounts")
+}
+
+enum SessionKind {
+  STAFF
+  MEMBER
+}
+
+/// Opaque session tokens. Only a SHA-256 hash of the token is stored.
+model Session {
+  id                   String         @id @default(cuid())
+  kind                 SessionKind
+  tokenHash            String         @unique
+  userId               String?
+  user                 User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberAccountId      String?
+  memberAccount        MemberAccount? @relation(fields: [memberAccountId], references: [id], onDelete: Cascade)
+  activeOrganizationId String?
+  expiresAt            DateTime
+  createdAt            DateTime       @default(now())
+  lastSeenAt           DateTime       @default(now())
+
+  @@index([userId])
+  @@index([memberAccountId])
+  @@map("sessions")
+}
+
+/// Magic links: securely random token, only the hash is stored; single-use and short-lived.
+model MagicLinkToken {
+  id              String        @id @default(cuid())
+  memberAccountId String
+  memberAccount   MemberAccount @relation(fields: [memberAccountId], references: [id], onDelete: Cascade)
+  tokenHash       String        @unique
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdAt       DateTime      @default(now())
+
+  @@index([memberAccountId, createdAt])
+  @@map("magic_link_tokens")
+}
+
+// ───────────────────────────── Organizations ─────────────────────────────
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Organization {
+  id                 String                     @id @default(cuid())
+  name               String
+  displayName        String
+  supportEmail       String
+  supportWhatsapp    String?
+  timezone           String                     @default("Africa/Lagos")
+  status             OrgStatus                  @default(ACTIVE)
+  /// Demo organizations can only ever use the deterministic demo payment provider.
+  isDemo             Boolean                    @default(false)
+  onboardingComplete Boolean                    @default(false)
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  staff              OrganizationStaff[]
+  invites            StaffInvite[]
+  communities        Community[]
+  plans              Plan[]
+  members            Member[]
+  memberships        Membership[]
+  orders             Order[]
+  payments           Payment[]
+  applications       MembershipPaymentApplication[]
+  accessTasks        AccessTask[]
+  notifications      Notification[]
+  consents           NotificationConsent[]
+  paymentConfig      OrganizationPaymentConfig?
+  reminderSettings   ReminderSettings?
+  saasBilling        SaasBillingRecord[]
+  reconciliation     ReconciliationIssue[]
+  auditLogs          AuditLog[]
+
+  @@map("organizations")
+}
+
+enum StaffRole {
+  OWNER
+  STAFF
+}
+
+model OrganizationStaff {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           StaffRole
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_staff")
+}
+
+model StaffInvite {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email           String
+  role            StaffRole
+  tokenHash       String       @unique
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId])
+  @@map("staff_invites")
+}
+
+enum PaymentSetupStatus {
+  NOT_CONFIGURED
+  PENDING_REVIEW
+  ACTIVE
+  SUSPENDED
+}
+
+enum FeeBearer {
+  ACCOUNT
+  SUBACCOUNT
+}
+
+/// Organization-specific Paystack split-settlement config. Set only by platform admins (V1).
+/// Contains no secret keys — the platform secret key lives in environment variables only.
+model OrganizationPaymentConfig {
+  id                  String             @id @default(cuid())
+  organizationId      String             @unique
+  organization        Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status              PaymentSetupStatus @default(NOT_CONFIGURED)
+  subaccountCode      String?
+  settlementBankName  String?
+  accountNumberLast4  String?
+  /// Platform fee in basis points of the plan price (explicit; 0 = no platform fee).
+  platformFeeBps      Int                @default(0)
+  /// Who bears Paystack's transaction fee.
+  feeBearer           FeeBearer          @default(SUBACCOUNT)
+  notes               String?
+  updatedByUserId     String?
+  verifiedAt          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@map("organization_payment_configs")
+}
+
+model ReminderSettings {
+  id                         String       @id @default(cuid())
+  organizationId             String       @unique
+  organization               Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  beforeExpiryDays           Int[]        @default([3, 1])
+  onExpiry                   Boolean      @default(true)
+  graceEnd                   Boolean      @default(true)
+  sendWindowStartHour        Int          @default(8)
+  sendWindowEndHour          Int          @default(20)
+  maxMessagesPerMemberPerDay Int          @default(2)
+  creatorDigestEnabled       Boolean      @default(true)
+  whatsappEnabled            Boolean      @default(true)
+  emailEnabled               Boolean      @default(true)
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  @@map("reminder_settings")
+}
+
+enum SaasBillingStatus {
+  DUE
+  PAID
+  WAIVED
+}
+
+/// Creator SaaS billing is recorded manually and kept separate from member payments.
+model SaasBillingRecord {
+  id               String            @id @default(cuid())
+  organizationId   String
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  periodStart      DateTime
+  periodEnd        DateTime
+  amountKobo       Int
+  status           SaasBillingStatus
+  note             String?
+  recordedByUserId String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([organizationId])
+  @@map("saas_billing_records")
+}
+
+// ───────────────────────────── Communities & plans ─────────────────────────────
+
+model Community {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                 String
+  description          String       @default("")
+  slug                 String       @unique
+  imageUrl             String?
+  /// PRIVATE. Never returned by public endpoints. Revealed only to eligible paid members.
+  whatsappInviteUrl    String
+  inviteUrlUpdatedAt   DateTime     @default(now())
+  accessInstructions   String       @default("")
+  gracePeriodDays      Int          @default(0)
+  /// Creator-attested: WhatsApp "approve new members" is switched on for the group.
+  adminApprovalEnabled Boolean      @default(false)
+  isPublished          Boolean      @default(true)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  plans                Plan[]
+  memberships          Membership[]
+  orders               Order[]
+  accessTasks          AccessTask[]
+
+  @@index([organizationId])
+  @@map("communities")
+}
+
+model Plan {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  communityId    String
+  community      Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  priceKobo      Int
+  currency       String       @default("NGN")
+  durationDays   Int
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  orders         Order[]
+  memberships    Membership[]
+
+  @@index([organizationId])
+  @@index([communityId])
+  @@map("plans")
+}
+
+// ───────────────────────────── Members & memberships ─────────────────────────────
+
+/// Organization-scoped member profile. Creators only ever see Member rows of their own org.
+model Member {
+  id              String                @id @default(cuid())
+  organizationId  String
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberAccountId String
+  memberAccount   MemberAccount         @relation(fields: [memberAccountId], references: [id], onDelete: Cascade)
+  fullName        String
+  email           String
+  phoneE164       String
+  emailReminders  Boolean               @default(true)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  memberships     Membership[]
+  orders          Order[]
+  consents        NotificationConsent[]
+  notifications   Notification[]
+  accessTasks     AccessTask[]
+
+  @@unique([organizationId, memberAccountId])
+  @@index([organizationId])
+  @@index([phoneE164])
+  @@map("members")
+}
+
+/// Creator-confirmed group access state. This is NOT live WhatsApp synchronization.
+enum AccessStatus {
+  NOT_GRANTED
+  PENDING_GRANT
+  GRANTED
+  PENDING_REMOVAL
+  REMOVED
+}
+
+model Membership {
+  id                    String                         @id @default(cuid())
+  organizationId        String
+  organization          Organization                   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  communityId           String
+  community             Community                      @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  memberId              String
+  member                Member                         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// The current plan. V1: one current plan per member per community.
+  planId                String
+  plan                  Plan                           @relation(fields: [planId], references: [id])
+  paidUntil             DateTime?
+  firstPaidAt           DateTime?
+  lastPaymentAt         DateTime?
+  /// Member indicated they do not intend to renew. Does not erase purchased access.
+  cancelledAt           DateTime?
+  accessStatus          AccessStatus                   @default(NOT_GRANTED)
+  accessStatusUpdatedAt DateTime                       @default(now())
+  /// Set when a creator dismisses a removal task; suppresses re-creating it for the same paid period.
+  removalDismissedForPaidUntil DateTime?
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
+  applications          MembershipPaymentApplication[]
+  accessTasks           AccessTask[]
+  notifications         Notification[]
+
+  @@unique([memberId, communityId])
+  @@index([organizationId, paidUntil])
+  @@index([organizationId, accessStatus])
+  @@index([communityId])
+  @@map("memberships")
+}
+
+// ───────────────────────────── Orders & payments ─────────────────────────────
+
+enum PaymentProvider {
+  PAYSTACK
+  DEMO
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  ABANDONED
+  NEEDS_REVIEW
+}
+
+/// A checkout attempt. All commercial values are snapshotted at creation time so that
+/// later plan edits never change what was purchased.
+model Order {
+  id                     String                        @id @default(cuid())
+  organizationId         String
+  organization           Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  communityId            String
+  community              Community                     @relation(fields: [communityId], references: [id])
+  planId                 String
+  plan                   Plan                          @relation(fields: [planId], references: [id])
+  memberId               String
+  member                 Member                        @relation(fields: [memberId], references: [id])
+  reference              String                        @unique
+  provider               PaymentProvider
+  isDemo                 Boolean                       @default(false)
+  status                 OrderStatus                   @default(PENDING)
+  // Snapshots
+  planNameSnapshot       String
+  communityNameSnapshot  String
+  amountKobo             Int
+  currency               String
+  durationDays           Int
+  subaccountCodeSnapshot String?
+  platformFeeKobo        Int                           @default(0)
+  feeBearerSnapshot      FeeBearer?
+  // Provider
+  checkoutUrl            String?
+  providerAccessCode     String?
+  lastVerifiedAt         DateTime?
+  lastVerifyStatus       String?
+  failureReason          String?
+  createdAt              DateTime                      @default(now())
+  updatedAt              DateTime                      @updatedAt
+  payment                Payment?
+  application            MembershipPaymentApplication?
+
+  @@index([organizationId, createdAt])
+  @@index([status, createdAt])
+  @@index([memberId])
+  @@map("orders")
+}
+
+enum PaymentStatus {
+  SUCCESS
+  HELD_FOR_REVIEW
+  REFUND_PENDING
+  REFUNDED
+  PARTIALLY_REFUNDED
+  DISPUTED
+}
+
+enum VerificationSource {
+  WEBHOOK
+  CALLBACK
+  RECONCILIATION
+}
+
+/// A provider-confirmed successful charge. Amount/currency/reference/paidAt are immutable
+/// (enforced by a database trigger). Only provider-confirmed status changes are recorded.
+model Payment {
+  id                    String                        @id @default(cuid())
+  organizationId        String
+  organization          Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId               String                        @unique
+  order                 Order                         @relation(fields: [orderId], references: [id])
+  provider              PaymentProvider
+  providerTransactionId String
+  reference             String
+  /// True only for real Paystack live-mode transactions. Demo payments are never live.
+  isLive                Boolean
+  status                PaymentStatus
+  amountKobo            Int
+  currency              String
+  paidAt                DateTime
+  channel               String?
+  feesKobo              Int?
+  verifiedVia           VerificationSource
+  refundedAmountKobo    Int                           @default(0)
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
+  application           MembershipPaymentApplication?
+
+  @@unique([provider, providerTransactionId])
+  @@unique([provider, reference])
+  @@index([organizationId, paidAt])
+  @@map("payments")
+}
+
+/// Idempotent fulfillment record: each verified payment extends a membership exactly once.
+model MembershipPaymentApplication {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membershipId      String
+  membership        Membership   @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  paymentId         String       @unique
+  payment           Payment      @relation(fields: [paymentId], references: [id])
+  orderId           String       @unique
+  order             Order        @relation(fields: [orderId], references: [id])
+  previousPaidUntil DateTime?
+  basisAt           DateTime
+  durationDays      Int
+  newPaidUntil      DateTime
+  createdAt         DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([membershipId])
+  @@map("membership_payment_applications")
+}
+
+/// Demo provider's deterministic "hosted checkout" state. Never used for real payments.
+model DemoTransaction {
+  id          String   @id @default(cuid())
+  reference   String   @unique
+  status      String   @default("pending")
+  amountKobo  Int
+  currency    String
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("demo_transactions")
+}
+
+enum ProviderEventSource {
+  PAYSTACK
+  WHATSAPP
+  DEMO
+}
+
+/// Verified inbound webhook events, persisted before acknowledging the provider.
+model ProviderEvent {
+  id              String              @id @default(cuid())
+  source          ProviderEventSource
+  eventType       String
+  dedupeKey       String              @unique
+  payload         Json
+  receivedAt      DateTime            @default(now())
+  processedAt     DateTime?
+  processingError String?
+  attempts        Int                 @default(0)
+
+  @@index([source, processedAt])
+  @@map("provider_events")
+}
+
+enum ReconciliationKind {
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  SUBACCOUNT_MISMATCH
+  MODE_MISMATCH
+  UNKNOWN_REFERENCE
+  REFUND
+  DISPUTE
+  VERIFY_ERROR
+  STALE_PENDING
+}
+
+enum IssueStatus {
+  OPEN
+  RESOLVED
+}
+
+model ReconciliationIssue {
+  id               String             @id @default(cuid())
+  organizationId   String?
+  organization     Organization?      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId          String?
+  paymentId        String?
+  reference        String?
+  kind             ReconciliationKind
+  details          Json
+  status           IssueStatus        @default(OPEN)
+  resolution       String?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([status, createdAt])
+  @@index([organizationId])
+  @@map("reconciliation_issues")
+}
+
+// ───────────────────────────── Access tasks ─────────────────────────────
+
+enum AccessTaskType {
+  GRANT
+  REMOVE
+  REVIEW
+}
+
+enum AccessTaskStatus {
+  OPEN
+  COMPLETED
+  DISMISSED
+  CANCELLED
+}
+
+enum AccessTaskReason {
+  NEW_PAID_MEMBER
+  RENEWED_AFTER_REMOVAL
+  MEMBERSHIP_EXPIRED
+  REFUND
+  DISPUTE
+  REOPENED
+  MANUAL
+}
+
+model AccessTask {
+  id                String           @id @default(cuid())
+  organizationId    String
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  communityId       String
+  community         Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  membershipId      String
+  membership        Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  memberId          String
+  member            Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  type              AccessTaskType
+  status            AccessTaskStatus @default(OPEN)
+  reason            AccessTaskReason
+  reasonDetail      String?
+  completedAt       DateTime?
+  completedByUserId String?
+  dismissedReason   String?
+  cancelledReason   String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  notes             AccessTaskNote[]
+
+  @@index([organizationId, status, type])
+  @@index([membershipId])
+  @@map("access_tasks")
+}
+
+model AccessTaskNote {
+  id           String     @id @default(cuid())
+  taskId       String
+  task         AccessTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorUserId String
+  body         String
+  createdAt    DateTime   @default(now())
+
+  @@index([taskId])
+  @@map("access_task_notes")
+}
+
+// ───────────────────────────── Notifications ─────────────────────────────
+
+enum NotificationChannel {
+  WHATSAPP
+  EMAIL
+}
+
+enum ConsentStatus {
+  GRANTED
+  WITHDRAWN
+}
+
+/// Explicit, versioned consent record. Separate from membership purchase.
+model NotificationConsent {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  channel        NotificationChannel
+  /// e.g. "membership_service": receipts, access, renewal reminders, expiry notices.
+  scope          String
+  status         ConsentStatus
+  phoneE164      String?
+  wordingVersion String
+  wordingText    String
+  source         String
+  grantedAt      DateTime?
+  withdrawnAt    DateTime?
+  withdrawSource String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([memberId, channel, scope])
+  @@index([organizationId])
+  @@index([phoneE164])
+  @@map("notification_consents")
+}
+
+enum NotificationType {
+  PAYMENT_RECEIPT
+  ACCESS_INSTRUCTIONS
+  RENEWAL_REMINDER
+  EXPIRY_NOTICE
+  GRACE_ENDED
+  CREATOR_DIGEST
+}
+
+enum NotificationStatus {
+  SCHEDULED
+  QUEUED
+  SENDING
+  ACCEPTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SUPPRESSED
+  NEEDS_REVIEW
+}
+
+model Notification {
+  id                String                @id @default(cuid())
+  organizationId    String
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberId          String?
+  member            Member?               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  membershipId      String?
+  membership        Membership?           @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  recipientUserId   String?
+  channel           NotificationChannel
+  type              NotificationType
+  reminderKey       String
+  /// organization:membership:channel:reminderType:paidUntil — unique, prevents duplicate sends.
+  dedupeKey         String                @unique
+  paidUntilSnapshot DateTime?
+  orderId           String?
+  status            NotificationStatus    @default(SCHEDULED)
+  scheduledFor      DateTime
+  providerMessageId String?               @unique
+  attemptCount      Int                   @default(0)
+  lastError         String?
+  suppressedReason  String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  attempts          NotificationAttempt[]
+
+  @@index([status, scheduledFor])
+  @@index([organizationId, createdAt])
+  @@index([membershipId])
+  @@map("notifications")
+}
+
+enum AttemptOutcome {
+  IN_FLIGHT
+  ACCEPTED
+  RETRYABLE_ERROR
+  PERMANENT_ERROR
+  AMBIGUOUS
+}
+
+model NotificationAttempt {
+  id                String         @id @default(cuid())
+  notificationId    String
+  notification      Notification   @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  attemptNo         Int
+  outcome           AttemptOutcome
+  providerMessageId String?
+  errorCode         String?
+  errorMessage      String?
+  startedAt         DateTime       @default(now())
+  finishedAt        DateTime?
+
+  @@unique([notificationId, attemptNo])
+  @@map("notification_attempts")
+}
+
+enum TemplatePurpose {
+  PAYMENT_CONFIRMATION
+  ACCESS_INSTRUCTIONS
+  RENEWAL_REMINDER
+  EXPIRY_NOTICE
+}
+
+enum TemplateStatus {
+  APPROVED
+  PENDING
+  REJECTED
+  DISABLED
+}
+
+/// Platform-owned WhatsApp template configuration (one official sender in V1).
+model WhatsappTemplate {
+  id        String          @id @default(cuid())
+  purpose   TemplatePurpose
+  name      String
+  language  String
+  category  String
+  status    TemplateStatus  @default(PENDING)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([purpose, language])
+  @@map("whatsapp_templates")
+}
+
+/// Records from the mock adapters (demo mode). Never real sends.
+model DemoOutboxMessage {
+  id        String   @id @default(cuid())
+  channel   String
+  recipient String
+  subject   String?
+  body      String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@map("demo_outbox_messages")
+}
+
+/// Integration health snapshot written by the API/worker (no secrets).
+model IntegrationStatus {
+  id          String    @id
+  mode        String
+  enabled     Boolean
+  configured  Boolean
+  lastOkAt    DateTime?
+  lastErrorAt DateTime?
+  lastError   String?
+  updatedAt   DateTime  @updatedAt
+
+  @@map("integration_statuses")
+}
+
+// ───────────────────────────── Audit ─────────────────────────────
+
+enum ActorType {
+  USER
+  MEMBER
+  SYSTEM
+  PROVIDER
+  ADMIN
+}
+
+/// Append-only audit trail (UPDATE/DELETE blocked by a database trigger).
+model AuditLog {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actorType      ActorType
+  actorId        String?
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@communitypass/core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@communitypass/shared": "workspace:*",
+    "@prisma/client": "6.19.3",
+    "prisma": "6.19.3",
+    "@node-rs/argon2": "2.2.2",
+    "pino": "9.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
