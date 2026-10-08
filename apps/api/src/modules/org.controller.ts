@@ -300,15 +300,20 @@ export class OrgController {
 
   // ───────────── Uploads ─────────────
 
-  @Roles('OWNER')
+  /** Image uploads (community picture). Allowed during onboarding; owner-only once an org exists. */
+  @NoOrgRequired()
   @Post('uploads')
   @HttpCode(201)
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: MAX_IMAGE_UPLOAD_BYTES, files: 1 } }))
-  async upload(@OrgId() orgId: string, @UploadedFile() file?: Express.Multer.File) {
+  async upload(@Staff() staff: StaffContext, @UploadedFile() file?: Express.Multer.File) {
+    if (staff.organizationId && staff.role !== 'OWNER') {
+      throw new DomainError('FORBIDDEN', 'Only the organization owner can upload images', 403);
+    }
+    const ownerKey = staff.organizationId ?? staff.user.id;
     if (!file) throw new BadRequestException({ code: 'NO_FILE', message: 'Choose an image to upload' });
     const kind = sniffImage(file.buffer);
     if (!kind) throw new BadRequestException({ code: 'BAD_FILE_TYPE', message: 'Only PNG, JPEG or WebP images are allowed' });
-    const name = `${orgId.slice(-6)}-${randomBytes(12).toString('hex')}.${kind.ext}`;
+    const name = `${ownerKey.slice(-6).toLowerCase()}-${randomBytes(12).toString('hex')}.${kind.ext}`;
     const dir = path.resolve(this.core.config.uploadDir);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, name), file.buffer, { mode: 0o640 });

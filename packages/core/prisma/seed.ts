@@ -252,7 +252,7 @@ async function main() {
   console.log('  Creator A      : chioma@demo.communitypass.test  (community /c/fit-fam-lagos)');
   console.log('  Creator A staff: staff@demo.communitypass.test');
   console.log('  Creator B      : emeka@demo.communitypass.test   (community /c/lagos-tech-founders)');
-  console.log('  Member (both)  : amaka@demo.communitypass.test  (magic link appears in the demo outbox)');
+  console.log('  Member (both)  : amaka@demo.communitypass.test  (demo mode shows a one-time sign-in link on /member/login)');
   await prisma.$disconnect();
 }
 

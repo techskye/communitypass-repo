@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AppConfig } from '../config';
+import { randomUUID } from 'node:crypto';
 import { hmacHex, timingSafeEqualHex } from '../infra';
 
 /**
@@ -201,7 +202,7 @@ export class MockWhatsappAdapter implements WhatsappAdapter {
     if (msg.toE164.endsWith('0998')) return { kind: 'ambiguous', code: 'timeout', message: 'Mock: timeout', safeToRetry: false };
     if (msg.toE164.endsWith('0997')) return { kind: 'retryable', code: '130429', message: 'Mock: rate limited' };
     this.sent.push(msg);
-    const id = `wamid.MOCK.${this.sent.length}.${Date.now()}`;
+    const id = `wamid.MOCK.${randomUUID()}`;
     if (this.prisma) {
       await this.prisma.demoOutboxMessage.create({
         data: {
@@ -237,7 +238,7 @@ export class MockEmailAdapter implements EmailAdapter {
         },
       });
     }
-    return { kind: 'accepted', providerMessageId: `mock-email-${this.sent.length}` };
+    return { kind: 'accepted', providerMessageId: `mock-email-${randomUUID()}` };
   }
 }
 
