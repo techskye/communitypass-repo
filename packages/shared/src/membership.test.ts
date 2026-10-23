@@ -163,3 +163,26 @@ describe('phone normalization', () => {
     expect(normalizePhoneE164('12345')).toBeNull();
   });
 });
+
+describe('WhatsApp invite link validation', () => {
+  it('accepts group/community links and strips sharing parameters', async () => {
+    const { whatsappInviteUrlSchema } = await import('./schemas');
+    expect(
+      whatsappInviteUrlSchema.parse('https://chat.whatsapp.com/IAmt3R115ahHhASumrkDLC?s=cl&p=i&mlu=4&ilr=4&iam=2'),
+    ).toBe('https://chat.whatsapp.com/IAmt3R115ahHhASumrkDLC');
+    expect(whatsappInviteUrlSchema.parse(' https://chat.whatsapp.com/IAmt3R115ahHhASumrkDLC/ ')).toBe(
+      'https://chat.whatsapp.com/IAmt3R115ahHhASumrkDLC',
+    );
+  });
+  it('rejects channel, wa.me and non-WhatsApp links', async () => {
+    const { whatsappInviteUrlSchema } = await import('./schemas');
+    for (const bad of [
+      'https://whatsapp.com/channel/0029VaABCDEFGHIJ',
+      'https://wa.me/2348031234567',
+      'https://evil.example/chat.whatsapp.com/IAmt3R115ahHhASumrkDLC',
+      'http://chat.whatsapp.com/IAmt3R115ahHhASumrkDLC',
+    ]) {
+      expect(whatsappInviteUrlSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+});

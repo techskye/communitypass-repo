@@ -36,16 +36,21 @@ export const phoneSchema = z
   });
 
 /**
- * WhatsApp invite URLs. We only accept the official chat.whatsapp.com invite format.
+ * WhatsApp invite URLs. We only accept the official chat.whatsapp.com invite format (groups and
+ * Communities). Tracking parameters WhatsApp appends when sharing (e.g. "?s=cl&p=i") are removed.
  * The app can store and update the link, but cannot reset or revoke it inside WhatsApp.
  */
+export function normalizeWhatsappInviteUrl(input: string): string {
+  return input.trim().split(/[?#]/)[0].replace(/\/+$/, '');
+}
+
 export const whatsappInviteUrlSchema = z
   .string()
   .trim()
-  .url()
-  .max(200)
+  .max(500)
+  .transform(normalizeWhatsappInviteUrl)
   .refine((u) => /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]{10,64}$/.test(u), {
-    message: 'Use a WhatsApp group invite link like https://chat.whatsapp.com/AbC123...',
+    message: 'Use a WhatsApp group or community invite link like https://chat.whatsapp.com/AbC123...',
   });
 
 export const planDurationSchema = z.coerce
