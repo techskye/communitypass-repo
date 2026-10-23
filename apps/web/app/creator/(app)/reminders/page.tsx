@@ -8,6 +8,7 @@ import { useMe } from '@/components/me-context';
 export default function Reminders() {
   const me = useMe();
   const { data, error, loading, reload } = useApi<any>('/org/reminder-settings');
+  const { data: billing } = useApi<any>('/org/billing');
   const [s, setS] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<ApiError | null>(null);
@@ -54,6 +55,9 @@ export default function Reminders() {
           <Card title="Channels">
             <div className="space-y-3">
               <Checkbox checked={s.whatsappEnabled} onChange={(e) => setS({ ...s, whatsappEnabled: e.target.checked })} label="WhatsApp (only to members who opted in)" hint="Sent from the CommunityPass WhatsApp number on your behalf, using pre-approved message templates." />
+              {billing && !billing.whatsappAllowed && (
+                <Alert kind="info">WhatsApp reminders are included in the Growth and Pro plans. <a href="/creator/billing" className="underline">Upgrade</a> to turn them on — until then members get email reminders.</Alert>
+              )}
               <Checkbox checked={s.emailEnabled} onChange={(e) => setS({ ...s, emailEnabled: e.target.checked })} label="Email" hint="Members can turn off email reminders themselves. Receipts are always sent." />
               <Checkbox checked={s.creatorDigestEnabled} onChange={(e) => setS({ ...s, creatorDigestEnabled: e.target.checked })} label="Send me a daily email of access tasks (7am Lagos)" />
             </div>

@@ -7,6 +7,9 @@ import {
   flagStuckSends,
   JOBS,
   processProviderEvent,
+  processSubscriptionRenewals,
+  reconcileSubscriptionInvoices,
+  refreshSubscriptionStatuses,
   reconcilePendingOrders,
   scheduleCreatorDigests,
   scheduleReminders,
@@ -38,6 +41,12 @@ export function maintenanceHandlers(ctx: CoreContext, enqueue: Enqueue): Record<
       return { requeued: events.length };
     },
     [JOBS.flagStuckSends]: async () => ({ flagged: await flagStuckSends(ctx) }),
+    // Creator subscriptions: verify pending invoices, charge due renewals, refresh status + notices.
+    [JOBS.subscriptionBilling]: async () => ({
+      reconciled: await reconcileSubscriptionInvoices(ctx),
+      renewals: await processSubscriptionRenewals(ctx),
+      statuses: await refreshSubscriptionStatuses(ctx),
+    }),
   };
 }
 

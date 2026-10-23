@@ -4,8 +4,10 @@ import { z } from 'zod';
 import { checkoutStartSchema, CURRENT_WHATSAPP_CONSENT_VERSION, WHATSAPP_CONSENT_VERSIONS } from '@communitypass/shared';
 import {
   CoreContext,
+  getDemoCheckout,
   getPaymentReadiness,
   getPublicOrderStatus,
+  memberLimitReached,
   simulateDemoCheckout,
   startCheckout,
   verifyFromCallback,
@@ -14,6 +16,7 @@ import { InjectCore } from '../common/core';
 import { ZodPipe } from '../common/http';
 
 const referenceSchema = z.string().regex(/^CP-[A-Z0-9]{16}$/);
+const demoReferenceSchema = z.string().regex(/^(CP|SUB)-[A-Z0-9]{16}$/);
 
 @Controller('public')
 export class PublicController {
@@ -46,6 +49,7 @@ export class PublicController {
     });
     if (!c || !c.isPublished || c.organization.status !== 'ACTIVE') throw new NotFoundException('Community not found');
     const readiness = await getPaymentReadiness(this.core, c.organizationId);
+    const full = readiness.ready && (await memberLimitReached(this.core.prisma, c.organizationId, this.core.now()));
     return {
       name: c.name,
       slug: c.slug,
@@ -55,7 +59,9 @@ export class PublicController {
       creator: { displayName: c.organization.displayName, supportEmail: c.organization.supportEmail },
       plans: c.plans,
       checkoutAvailable: readiness.ready,
-      checkoutUnavailableReason: readiness.ready ? null : 'This creator is not accepting payments yet.',
+      checkoutUnavailableReason: readiness.ready ? null : 'This creator is not accepting payments right now.',
+      newMembersAllowed: readiness.ready && !full,
+      newMembersUnavailableReason: full ? 'This community is not accepting new members right now. Existing members can still renew from their member page.' : null,
       isDemoCheckout: readiness.provider === 'DEMO',
       whatsappConsentText: WHATSAPP_CONSENT_VERSIONS[CURRENT_WHATSAPP_CONSENT_VERSION](c.organization.displayName),
       whatsappConsentVersion: CURRENT_WHATSAPP_CONSENT_VERSION,
@@ -84,18 +90,15 @@ export class PublicController {
   // ───────────── Demo hosted checkout (APP_MODE=demo only) ─────────────
 
   @Get('demo-checkout/:reference')
-  async demoCheckout(@Param('reference', new ZodPipe(referenceSchema)) reference: string) {
+  async demoCheckout(@Param('reference', new ZodPipe(demoReferenceSchema)) reference: string) {
     if (this.core.config.appMode !== 'demo') throw new NotFoundException();
-    const order = await getPublicOrderStatus(this.core, reference);
-    if (!order.isDemo) throw new NotFoundException();
-    const t = await this.core.prisma.demoTransaction.findUnique({ where: { reference } });
-    return { ...order, demoStatus: t?.status ?? 'missing' };
+    return getDemoCheckout(this.core, reference);
   }
 
   @HttpCode(200)
   @Post('demo-checkout/:reference/complete')
   async demoComplete(
-    @Param('reference', new ZodPipe(referenceSchema)) reference: string,
+    @Param('reference', new ZodPipe(demoReferenceSchema)) reference: string,
     @Body(new ZodPipe(z.object({ outcome: z.enum(['success', 'failed', 'wrong_amount']) }))) body: { outcome: 'success' | 'failed' | 'wrong_amount' },
   ) {
     return simulateDemoCheckout(this.core, reference, body.outcome);

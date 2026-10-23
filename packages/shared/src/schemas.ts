@@ -13,6 +13,8 @@ const optionalText = (max: number) =>
     .optional()
     .transform((v) => (v ? v : undefined));
 
+export const subscriptionTierSchema = z.enum(['STARTER', 'GROWTH', 'PRO']);
+
 export const slugSchema = z
   .string()
   .trim()
@@ -128,6 +130,7 @@ export const onboardingSchema = z.object({
   community: communityInputSchema,
   plans: z.array(planInputSchema).min(1).max(6),
   reminders: reminderSettingsSchema.optional(),
+  tier: subscriptionTierSchema.default('STARTER'),
   acknowledgeManualAccess: z.literal(true, {
     errorMap: () => ({ message: 'Please confirm you understand group access is managed manually' }),
   }),
@@ -201,6 +204,12 @@ export const whatsappTemplateSchema = z.object({
   language: z.string().trim().regex(/^[a-z]{2,3}(_[A-Z]{2})?$/),
   category: z.enum(['UTILITY', 'MARKETING']),
   status: z.enum(['APPROVED', 'PENDING', 'REJECTED', 'DISABLED']),
+});
+
+export const changePlanSchema = z.object({ tier: subscriptionTierSchema });
+export const adminSubscriptionSchema = z.object({
+  tier: subscriptionTierSchema.optional(),
+  extendTrialDays: z.coerce.number().int().min(1).max(365).optional(),
 });
 
 export const resolveIssueSchema = z.object({ resolution: shortText(1000) });

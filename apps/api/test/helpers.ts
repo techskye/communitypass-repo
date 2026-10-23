@@ -38,7 +38,7 @@ export async function agentFor(app: INestApplication) {
   };
 }
 
-export const onboardingBody = (slug: string, name: string) => ({
+export const onboardingBody = (slug: string, name: string, tier: 'STARTER' | 'GROWTH' | 'PRO' = 'STARTER') => ({
   organizationName: `${name} Ltd`,
   displayName: name,
   supportEmail: `${slug}@example.com`,
@@ -53,12 +53,13 @@ export const onboardingBody = (slug: string, name: string) => ({
     isPublished: true,
   },
   plans: [{ name: '30-day membership', priceKobo: 500000, durationDays: 30 }],
+  tier,
   acknowledgeManualAccess: true,
 });
 
-export async function creatorWithOrg(app: INestApplication, slug: string, name: string) {
+export async function creatorWithOrg(app: INestApplication, slug: string, name: string, tier: 'STARTER' | 'GROWTH' | 'PRO' = 'STARTER') {
   const a = await agentFor(app);
   await a.post('/api/auth/signup', { name, email: `${slug}@creator.test`, password: 'correct-horse-battery' }).expect(201);
-  const r = await a.post('/api/org/onboarding', onboardingBody(slug, name)).expect(201);
+  const r = await a.post('/api/org/onboarding', onboardingBody(slug, name, tier)).expect(201);
   return { ...a, organizationId: r.body.organizationId as string, communityId: r.body.communityId as string };
 }

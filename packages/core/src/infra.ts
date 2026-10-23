@@ -59,12 +59,12 @@ export function hmacHex(algorithm: 'sha512' | 'sha256', key: string, raw: Buffer
 }
 
 /** Payment reference: unambiguous, URL-safe, unique (also enforced by a DB constraint). */
-export function newPaymentReference(): string {
+export function newPaymentReference(prefix: 'CP' | 'SUB' = 'CP'): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(16);
   let s = '';
   for (const b of bytes) s += alphabet[b % alphabet.length];
-  return `CP-${s}`;
+  return `${prefix}-${s}`;
 }
 
 export function newId(): string {

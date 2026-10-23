@@ -13,6 +13,8 @@ interface PublicCommunity {
   plans: { id: string; name: string; description: string | null; priceKobo: number; durationDays: number }[];
   checkoutAvailable: boolean;
   checkoutUnavailableReason: string | null;
+  newMembersAllowed: boolean;
+  newMembersUnavailableReason: string | null;
   isDemoCheckout: boolean;
 }
 
@@ -48,9 +50,9 @@ export default async function CommunityPage({ params }: { params: Promise<{ slug
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">Choose a plan</h2>
-      {!c.checkoutAvailable && (
+      {(!c.checkoutAvailable || !c.newMembersAllowed) && (
         <p role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          {c.checkoutUnavailableReason}
+          {c.checkoutUnavailableReason ?? c.newMembersUnavailableReason}
         </p>
       )}
       <ul className="mt-3 space-y-3">
@@ -65,7 +67,7 @@ export default async function CommunityPage({ params }: { params: Promise<{ slug
             </div>
             <div className="flex items-center gap-3">
               <span className="text-lg font-bold">{formatNgn(p.priceKobo)}</span>
-              {c.checkoutAvailable ? (
+              {c.checkoutAvailable && c.newMembersAllowed ? (
                 <Link href={`/c/${c.slug}/join?plan=${p.id}`} className="rounded-lg bg-brand-600 px-4 py-2 font-medium text-white hover:bg-brand-700">
                   Join
                 </Link>

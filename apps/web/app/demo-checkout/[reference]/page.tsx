@@ -20,8 +20,8 @@ export default function DemoCheckout() {
     setBusy(outcome);
     setErr(null);
     try {
-      await api(`/public/demo-checkout/${reference}/complete`, { body: { outcome } });
-      window.location.assign(`/payment/callback?reference=${encodeURIComponent(reference)}`);
+      const r = await api<{ returnUrl?: string }>(`/public/demo-checkout/${reference}/complete`, { body: { outcome } });
+      window.location.assign(r.returnUrl ?? `/payment/callback?reference=${encodeURIComponent(reference)}`);
     } catch (e) {
       setErr(e as ApiError);
       setBusy(null);

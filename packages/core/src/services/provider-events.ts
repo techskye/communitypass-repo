@@ -6,6 +6,7 @@ import { verifyPaystackSignature } from '../adapters/payment';
 import { verifyMetaSignature } from '../adapters/messaging';
 import { lockMembership, openTaskIfAbsent } from './access';
 import { fulfillVerifiedTransaction } from './fulfillment';
+import { applySubscriptionPayment } from './billing';
 import { applyWhatsappStatus, isOptOutText, withdrawWhatsappConsentByPhone } from './notifications';
 
 export type RecordResult =
@@ -184,6 +185,7 @@ async function processPaystackEvent(ctx: CoreContext, event: string, payload: an
     if (!adapter) throw new Error('Paystack adapter not configured');
     // Even though the webhook is signed, re-verify server-side before fulfilling.
     const v = await adapter.verify(reference);
+    if (reference.startsWith('SUB-')) return `subscription:${await applySubscriptionPayment(ctx, reference, v)}`;
     const r = await fulfillVerifiedTransaction(ctx, reference, v, 'WEBHOOK');
     return r.outcome;
   }

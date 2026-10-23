@@ -231,6 +231,14 @@ describe('Member access instructions are only revealed to entitled members', () 
     const detail = (await m.get(`/api/member/memberships/${list[0].id}`).expect(200)).body;
     expect(detail.access.inviteUrl).toContain('chat.whatsapp.com');
 
+    // Another member cannot read this membership.
+    const other = await agentFor(app);
+    await checkout('iota-club', 'other@example.com');
+    await other.post('/api/member/auth/magic-link', { email: 'other@example.com' }).expect(200);
+    const t2 = /#token=([A-Za-z0-9_-]+)/.exec(env.email.sent.at(-1)!.text)![1];
+    await other.post('/api/member/auth/verify', { token: t2 }).expect(200);
+    await other.get(`/api/member/memberships/${list[0].id}`).expect(404);
+
     env.clock.advanceDays(31 + 1); // past paid_until + 1-day grace
     // (the 14-day member session has expired by now too — sign in again)
     await m.get('/api/member/memberships').expect(401);
@@ -241,13 +249,6 @@ describe('Member access instructions are only revealed to entitled members', () 
     expect(later.entitlement).toBe('expired');
     expect(later.access).toBeNull();
 
-    // Another member cannot read this membership.
-    const other = await agentFor(app);
-    await checkout('iota-club', 'other@example.com');
-    await other.post('/api/member/auth/magic-link', { email: 'other@example.com' }).expect(200);
-    const t2 = /#token=([A-Za-z0-9_-]+)/.exec(env.email.sent.at(-1)!.text)![1];
-    await other.post('/api/member/auth/verify', { token: t2 }).expect(200);
-    await other.get(`/api/member/memberships/${list[0].id}`).expect(404);
   });
 });
 
@@ -260,5 +261,42 @@ describe('Uploads', () => {
       .attach('file', Buffer.from('<script>alert(1)</script>'), { filename: 'x.png', contentType: 'image/png' });
     expect(r.status).toBe(400);
     expect(r.body.code).toBe('BAD_FILE_TYPE');
+  });
+});
+
+describe('Creator subscription billing (API)', () => {
+  it('owners manage the plan; staff and other tenants cannot; plan limits are enforced', async () => {
+    const a = await creatorWithOrg(app, 'lambda-club', 'Lambda');
+    const b = await creatorWithOrg(app, 'mu-club', 'Mu');
+    const billing = (await a.get('/api/org/billing').expect(200)).body;
+    expect(billing.subscription).toMatchObject({ tier: 'STARTER', access: 'trialing' });
+    expect(billing.limits).toEqual({ maxCommunities: 1, maxActiveMembers: 100 });
+    expect(billing.whatsappAllowed).toBe(false);
+    expect(JSON.stringify(billing)).not.toContain('authorizationCode');
+
+    // Starter = 1 community.
+    const second = await a.post('/api/org/communities', {
+      name: 'Second', slug: 'lambda-two', whatsappInviteUrl: 'https://chat.whatsapp.com/LambdaTwo123456',
+    });
+    expect(second.status).toBe(403);
+    expect(second.body.code).toBe('PLAN_LIMIT_COMMUNITIES');
+    await a.post('/api/org/billing/plan', { tier: 'GROWTH' }).expect(200);
+    await a.post('/api/org/communities', {
+      name: 'Second', slug: 'lambda-two', whatsappInviteUrl: 'https://chat.whatsapp.com/LambdaTwo123456',
+    }).expect(201);
+    expect((await a.get('/api/org/billing').expect(200)).body.whatsappAllowed).toBe(true);
+
+    // Org B sees only its own subscription and cannot verify A's invoices.
+    expect((await b.get('/api/org/billing').expect(200)).body.subscription.tier).toBe('STARTER');
+    const ref = (await a.post('/api/org/billing/checkout', {}).expect(200)).body.reference;
+    await b.post(`/api/org/billing/verify/${ref}`).expect(404);
+  });
+
+  it('subscription checkout goes to the platform account (no creator subaccount)', async () => {
+    const a = await creatorWithOrg(app, 'nu-club', 'Nu');
+    await activatePayments(a.organizationId);
+    const { reference } = (await a.post('/api/org/billing/checkout', {}).expect(200)).body;
+    const inv = await env.db.subscriptionInvoice.findUniqueOrThrow({ where: { reference } });
+    expect(inv).toMatchObject({ kind: 'CHECKOUT', tier: 'STARTER', amountKobo: 500000, provider: 'PAYSTACK', status: 'PENDING' });
   });
 });

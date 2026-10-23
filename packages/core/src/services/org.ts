@@ -1,5 +1,5 @@
 import type { OnboardingInput, PlanInput } from '@communitypass/shared';
-import { DEFAULT_REMINDER_SETTINGS } from '@communitypass/shared';
+import { DAY_MS, DEFAULT_REMINDER_SETTINGS, SUBSCRIPTION_TRIAL_DAYS } from '@communitypass/shared';
 import type { CoreContext } from '../context';
 import { audit, DomainError, isUniqueViolation } from '../infra';
 
@@ -18,6 +18,13 @@ export async function completeOnboarding(ctx: CoreContext, userId: string, input
           staff: { create: { userId, role: 'OWNER' } },
           paymentConfig: { create: { status: 'NOT_CONFIGURED' } },
           reminderSettings: { create: { ...(input.reminders ?? DEFAULT_REMINDER_SETTINGS) } },
+          subscription: {
+            create: {
+              tier: input.tier ?? 'STARTER',
+              status: 'TRIALING',
+              trialEndsAt: new Date(ctx.now().getTime() + SUBSCRIPTION_TRIAL_DAYS * DAY_MS),
+            },
+          },
         },
       });
       const community = await tx.community.create({

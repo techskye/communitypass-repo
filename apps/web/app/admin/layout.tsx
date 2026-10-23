@@ -8,6 +8,7 @@ import { cx, Loading } from '@/components/ui';
 
 const NAV: [string, string][] = [
   ['/admin', 'Organizations'],
+  ['/admin/billing', 'Creator billing'],
   ['/admin/integrations', 'Integration health'],
   ['/admin/jobs', 'Failed jobs'],
   ['/admin/reconciliation', 'Reconciliation'],

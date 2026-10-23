@@ -18,7 +18,8 @@ import {
 } from '@communitypass/shared';
 import type { CoreContext } from '../context';
 import { audit, Db, Tx } from '../infra';
-import { buildDigestEmail, buildMemberMessage } from '../messages';
+import { buildBillingEmail, buildDigestEmail, buildMemberMessage } from '../messages';
+import { getOrgEntitlements } from './billing';
 import type { SendOutcome } from '../adapters/messaging';
 
 export const WHATSAPP_SERVICE_SCOPE = 'membership_service';
@@ -53,13 +54,19 @@ async function hasWhatsappConsent(db: Tx | Db, memberId: string): Promise<boolea
 /** Channels allowed for a member right now (re-checked again immediately before delivery). */
 export async function eligibleChannels(
   db: Tx | Db,
-  p: { organizationId: string; memberId: string; kind: 'transactional' | 'reminder' },
+  p: { organizationId: string; memberId: string; kind: 'transactional' | 'reminder'; now: Date },
 ): Promise<NotificationChannel[]> {
   const settings = await getReminderSettings(db, p.organizationId);
   const member = await db.member.findUniqueOrThrow({ where: { id: p.memberId } });
   const out: NotificationChannel[] = [];
   if (settings.emailEnabled && (p.kind === 'transactional' || member.emailReminders)) out.push('EMAIL');
-  if (settings.whatsappEnabled && (await hasWhatsappConsent(db, p.memberId))) out.push('WHATSAPP');
+  if (
+    settings.whatsappEnabled &&
+    (await getOrgEntitlements(db, p.organizationId, p.now)).whatsappAllowed &&
+    (await hasWhatsappConsent(db, p.memberId))
+  ) {
+    out.push('WHATSAPP');
+  }
   return out;
 }
 
@@ -165,6 +172,7 @@ export async function scheduleReminders(ctx: CoreContext, opts: { lookaheadHours
       organizationId: m.organizationId,
       memberId: m.memberId,
       kind: 'reminder',
+      now,
     });
     const rows: Prisma.NotificationCreateManyInput[] = [];
     for (const r of planned) {
@@ -287,6 +295,7 @@ export async function deliverNotification(ctx: CoreContext, notificationId: stri
   }
 
   if (n.type === 'CREATOR_DIGEST') return deliverDigest(ctx, n);
+  if (n.type === 'CREATOR_BILLING') return deliverBillingNotice(ctx, n);
 
   const org = await db.organization.findUniqueOrThrow({ where: { id: n.organizationId } });
   const settings = await getReminderSettings(db, n.organizationId);
@@ -317,6 +326,9 @@ export async function deliverNotification(ctx: CoreContext, notificationId: stri
     if (isReminder && !member.emailReminders) return suppress(db, n.id, 'member turned off email reminders');
   } else {
     if (!settings.whatsappEnabled) return suppress(db, n.id, 'whatsapp disabled by creator');
+    if (!(await getOrgEntitlements(db, n.organizationId, now)).whatsappAllowed) {
+      return suppress(db, n.id, 'whatsapp not included in current plan');
+    }
     if (!(await hasWhatsappConsent(db, member.id))) return suppress(db, n.id, 'no whatsapp consent (opted out)');
     if (ctx.adapters.whatsapp.kind === 'disabled') return suppress(db, n.id, 'whatsapp integration disabled');
   }
@@ -341,7 +353,7 @@ export async function deliverNotification(ctx: CoreContext, notificationId: stri
     }
   }
 
-  const msg = buildMemberMessage(n.type as Exclude<NotificationType, 'CREATOR_DIGEST'>, {
+  const msg = buildMemberMessage(n.type as Exclude<NotificationType, 'CREATOR_DIGEST' | 'CREATOR_BILLING'>, {
     memberName: member.fullName.split(' ')[0] || member.fullName,
     creatorName: org.displayName,
     communityName: membership.community.name,
@@ -623,6 +635,31 @@ async function deliverDigest(ctx: CoreContext, n: Notification): Promise<Deliver
     expiringSoon: counts[3],
     failedNotifications: counts[4],
     url: `${ctx.config.webBaseUrl}/creator/tasks`,
+  });
+  const attempt = await db.notificationAttempt.create({
+    data: { notificationId: n.id, attemptNo: n.attemptCount, outcome: 'IN_FLIGHT' },
+  });
+  const outcome = await ctx.adapters.email.send({ to: staff.user.email, ...email, idempotencyKey: n.dedupeKey });
+  return recordOutcome(ctx, n, attempt.id, outcome);
+}
+
+async function deliverBillingNotice(ctx: CoreContext, n: Notification): Promise<DeliveryResult> {
+  const db = ctx.prisma;
+  if (!n.recipientUserId) return suppress(db, n.id, 'missing recipient');
+  const staff = await db.organizationStaff.findUnique({
+    where: { organizationId_userId: { organizationId: n.organizationId, userId: n.recipientUserId } },
+    include: { user: true, organization: true },
+  });
+  if (!staff || staff.role !== 'OWNER') return suppress(db, n.id, 'recipient no longer owner');
+  const sub = await db.organizationSubscription.findUnique({ where: { organizationId: n.organizationId } });
+  if (!sub) return suppress(db, n.id, 'no subscription');
+  const email = buildBillingEmail(n.reminderKey, {
+    orgName: staff.organization.displayName,
+    tier: sub.tier,
+    trialEndsAt: sub.trialEndsAt,
+    currentPeriodEnd: sub.currentPeriodEnd,
+    cardLast4: sub.cardLast4,
+    url: `${ctx.config.webBaseUrl}/creator/billing`,
   });
   const attempt = await db.notificationAttempt.create({
     data: { notificationId: n.id, attemptNo: n.attemptCount, outcome: 'IN_FLIGHT' },

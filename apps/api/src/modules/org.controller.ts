@@ -29,6 +29,7 @@ import {
   staffInviteSchema,
 } from '@communitypass/shared';
 import {
+  assertCanAddCommunity,
   audit,
   completeOnboarding,
   CoreContext,
@@ -125,6 +126,7 @@ export class OrgController {
   @Roles('OWNER')
   @Post('communities')
   async createCommunity(@OrgId() orgId: string, @Staff() s: StaffContext, @Body(new ZodPipe(communityInputSchema)) body: any) {
+    await assertCanAddCommunity(this.core, orgId);
     try {
       const c = await this.core.prisma.community.create({ data: { ...body, organizationId: orgId } });
       await audit(this.core.prisma, { organizationId: orgId, actorType: 'USER', actorId: s.user.id, action: 'community.created', entityType: 'Community', entityId: c.id });

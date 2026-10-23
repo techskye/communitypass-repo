@@ -15,4 +15,5 @@ export const JOBS = {
   creatorDigest: 'creator-daily-digest',
   sweepEvents: 'sweep-unprocessed-events',
   flagStuckSends: 'flag-stuck-sends',
+  subscriptionBilling: 'subscription-billing',
 } as const;

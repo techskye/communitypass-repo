@@ -30,6 +30,27 @@ before going live.
 list Paystack's webhook IPs as `52.31.139.75`, `52.49.173.169` and `52.214.14.220`. **VERIFY**
 these before adding a firewall rule in Caddy.
 
+### Creator subscriptions (CommunityPass SaaS billing)
+
+* Creators pay CommunityPass monthly: **Starter ₦5,000** (1 community, 100 active paid members,
+  email only), **Growth ₦15,000** (3 communities, 500 members, WhatsApp reminders), **Pro ₦35,000**
+  (unlimited). Every creator starts with a 14-day free trial, and no card is needed to start.
+* The first payment is a hosted Paystack checkout restricted to `channels: ["card"]`, with **no
+  subaccount**, so the money goes to the platform's own account. The card's reusable
+  `authorization_code` is saved, and renewals use `POST /transaction/charge_authorization`.
+  **VERIFY** the request and response fields of `charge_authorization` (`authorization_code`,
+  `reusable`, `last4`, `exp_month`, `exp_year`, `brand`/`card_type`) and whether any Nigerian card
+  types return `send_otp` or `pending` for recurring charges. Those cases are treated as not
+  successful and retried.
+* Renewals are charged at the end of the paid period, at most one attempt per period per daily
+  retry slot (unique `renewalKey`). A charge whose outcome is unknown (timeout) is never repeated
+  automatically; reconciliation verifies it by reference. Up to 4 attempts are made.
+* If unpaid, creators get a 7-day grace period, then their pages stop taking member payments.
+  Existing members keep the time they paid for. At the active-member limit, new members are
+  blocked but current members can still renew.
+* The authorization code is a provider token (not card data). It is stored server-side only
+  and never returned by any API.
+
 ### Settlement model and fees
 
 * One platform Paystack account. Each creator gets a Paystack **subaccount** that settles to
@@ -38,6 +59,8 @@ these before adding a firewall rule in Caddy.
   **Admin → Organizations → Payment setup**.
 * Creators never enter or see secret keys. The platform secret key lives only in
   `PAYSTACK_SECRET_KEY`.
+* **Business model: creators keep 100% of member payments** (minus Paystack's own fee, borne by
+  the subaccount). Keep `platformFeeBps = 0`; CommunityPass earns from the monthly subscription.
 * The platform fee is explicit: `platformFeeBps` on the organization (default 0), sent as a flat
   `transaction_charge`. Who pays Paystack's processing fee is explicit too (`feeBearer`). Both
   are snapshotted on every order.

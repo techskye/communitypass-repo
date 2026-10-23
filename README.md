@@ -26,6 +26,28 @@ A mobile-first membership manager for Nigerian creators who run **paid WhatsApp 
 | Official WhatsApp Cloud API templates, only to opted-in members | Bulk or promotional messaging |
 | Reminders 3d / 1d before expiry, on expiry, at grace end (Lagos sending hours) | Claim exactly-once delivery from providers that don't offer it |
 
+## Business model
+
+* **Members pay creators directly.** Each creator has a Paystack subaccount, and member payments
+  settle 100% to the creator's bank account (minus Paystack's processing fee). CommunityPass never
+  holds member money.
+* **Creators pay CommunityPass a monthly subscription** by card, with automatic monthly renewal:
+
+| Plan | Price / month | Communities | Active paid members | WhatsApp reminders |
+|---|---|---|---|---|
+| Starter | ₦5,000 | 1 | 100 | — (email only) |
+| Growth | ₦15,000 | 3 | 500 | ✓ |
+| Pro | ₦35,000 | Unlimited | Unlimited | ✓ |
+
+Rules:
+* Every new creator gets a 14-day free trial.
+* Upgrades apply immediately; downgrades apply at the next renewal.
+* If unpaid: a 7-day grace period, then new member payments pause. Existing members keep their
+  paid time.
+* At the member limit, new signups are blocked and current members can still renew.
+
+To change prices or limits, edit `packages/shared/src/billing.ts`.
+
 ## Architecture
 
 ```
@@ -121,11 +143,12 @@ pnpm test:e2e-demo      # end-to-end demo lifecycle through the HTTP API + worke
 pnpm typecheck
 ```
 
-Results at time of writing (2026-10-08): **62 tests passed, 0 failed.**
-* `packages/shared`: 23 tests (date and duration math, grace boundaries, reminder planning,
-  CSV injection, phone normalization).
-* `packages/core`: 26 integration tests.
-* `apps/api`: 12 HTTP tests.
+Results at time of writing (2026-10-23): **78 tests passed, 0 failed.**
+* `packages/shared`: 25 tests (date and duration math, grace boundaries, reminder planning,
+  CSV injection, phone normalization, WhatsApp invite links).
+* `packages/core`: 38 integration tests, including creator subscription billing (trial, saved-card
+  renewals charged once, failed or ambiguous charges, grace and pause, plan limits, WhatsApp gating).
+* `apps/api`: 14 HTTP tests.
 * E2E demo: 1 test.
 
 All packages typecheck and `next build` succeeds.

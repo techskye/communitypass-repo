@@ -12,6 +12,8 @@ export default function AdminOrg() {
   const [pc, setPc] = useState<any>(null);
   const [bill, setBill] = useState({ periodStart: '', periodEnd: '', amount: '', status: 'DUE', note: '' });
   const [err, setErr] = useState<ApiError | null>(null);
+  const [subTier, setSubTier] = useState('');
+  const [trialDays, setTrialDays] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => {
     if (o) setPc({ subaccountCode: o.paymentConfig?.subaccountCode ?? '', settlementBankName: o.paymentConfig?.settlementBankName ?? '', accountNumberLast4: o.paymentConfig?.accountNumberLast4 ?? '', platformFeeBps: o.paymentConfig?.platformFeeBps ?? 0, feeBearer: o.paymentConfig?.feeBearer ?? 'SUBACCOUNT', status: o.paymentConfig?.status === 'NOT_CONFIGURED' ? 'PENDING_REVIEW' : o.paymentConfig?.status ?? 'PENDING_REVIEW', notes: o.paymentConfig?.notes ?? '' });
@@ -61,7 +63,7 @@ export default function AdminOrg() {
             <Field label="Subaccount code" required placeholder="ACCT_xxxxxxxx" value={pc.subaccountCode} onChange={(e) => setPc({ ...pc, subaccountCode: e.target.value })} />
             <Field label="Settlement bank (display)" value={pc.settlementBankName} onChange={(e) => setPc({ ...pc, settlementBankName: e.target.value })} />
             <Field label="Account number last 4 (display)" inputMode="numeric" maxLength={4} value={pc.accountNumberLast4} onChange={(e) => setPc({ ...pc, accountNumberLast4: e.target.value })} />
-            <Field label="Platform fee (basis points)" type="number" min={0} max={3000} value={pc.platformFeeBps} onChange={(e) => setPc({ ...pc, platformFeeBps: Number(e.target.value) })} hint={`${pc.platformFeeBps / 100}% of plan price, sent to the main account as a flat transaction_charge.`} />
+            <Field label="Platform fee (basis points)" type="number" min={0} max={3000} value={pc.platformFeeBps} onChange={(e) => setPc({ ...pc, platformFeeBps: Number(e.target.value) })} hint={`${pc.platformFeeBps / 100}% of each member payment. Keep 0 — creators pay a monthly subscription instead, and receive 100% of member payments.`} />
             <Select label="Paystack fee bearer" value={pc.feeBearer} onChange={(e) => setPc({ ...pc, feeBearer: e.target.value })}>
               <option value="SUBACCOUNT">Creator (subaccount)</option>
               <option value="ACCOUNT">Platform (main account)</option>
@@ -75,7 +77,17 @@ export default function AdminOrg() {
             <div className="sm:col-span-2"><Button type="submit">Save payment setup</Button></div>
           </form>
         </Card>
-        <Card title="Creator SaaS billing (recorded manually)">
+        <Card title="CommunityPass subscription">
+          <p className="mb-3 text-sm text-gray-600">Creators subscribe and pay by card from their Billing page. Use these controls for complimentary access or support cases (all changes are audited).</p>
+          <div className="flex flex-wrap items-end gap-2">
+            <Select label="Set plan" value={subTier} onChange={(e) => setSubTier(e.target.value)}>
+              <option value="">— keep —</option><option value="STARTER">Starter</option><option value="GROWTH">Growth</option><option value="PRO">Pro</option>
+            </Select>
+            <Field label="Extend trial (days)" type="number" min={1} max={365} value={trialDays} onChange={(e) => setTrialDays(e.target.value)} />
+            <Button onClick={() => run(() => api(`/admin/organizations/${id}/subscription`, { body: { ...(subTier ? { tier: subTier } : {}), ...(trialDays ? { extendTrialDays: Number(trialDays) } : {}) } }), 'Subscription updated.')}>Apply</Button>
+          </div>
+        </Card>
+        <Card title="Other billing notes (recorded manually)">
           <p className="mb-2 text-sm text-gray-600">Kept separate from member payments. Nothing is deducted from members’ payments for this.</p>
           <ul className="mb-3 divide-y divide-gray-100 text-sm">
             {o.saasBilling.map((b: any) => <li key={b.id} className="flex justify-between py-2"><span>{formatDate(b.periodStart)} – {formatDate(b.periodEnd)} · {formatNgn(b.amountKobo)} {b.note && `· ${b.note}`}</span><Badge>{b.status}</Badge></li>)}

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
-import { paymentSetupSchema, resolveIssueSchema, saasBillingRecordSchema, whatsappTemplateSchema } from '@communitypass/shared';
-import { audit, CoreContext, DomainError, getOrgMetrics, NotFoundError, publicConfigSummary } from '@communitypass/core';
+import { SUBSCRIPTION_TIERS, adminSubscriptionSchema, getSubscriptionAccess, paymentSetupSchema, resolveIssueSchema, saasBillingRecordSchema, subscriptionPaidThrough, whatsappTemplateSchema } from '@communitypass/shared';
+import { adminAdjustSubscription, audit, CoreContext, DomainError, ensureSubscription, getOrgMetrics, NotFoundError, publicConfigSummary } from '@communitypass/core';
 import { InjectCore, QueueService } from '../common/core';
 import { PlatformAdminGuard, Staff, StaffContext } from '../common/auth';
 import { ZodPipe } from '../common/http';
@@ -95,6 +95,54 @@ export class AdminController {
     const r = await this.core.prisma.saasBillingRecord.create({ data: { ...body, organizationId: id, recordedByUserId: s.user.id } });
     await audit(this.core.prisma, { organizationId: id, actorType: 'ADMIN', actorId: s.user.id, action: 'saas_billing.recorded', entityType: 'SaasBillingRecord', entityId: r.id, metadata: { amountKobo: r.amountKobo, status: r.status } });
     return r;
+  }
+
+  /** Creator subscriptions: who is trialing, paying, overdue or paused, and expected monthly revenue. */
+  @Get('billing')
+  async billing() {
+    const now = this.core.now();
+    const orgs = await this.core.prisma.organization.findMany({
+      select: { id: true, displayName: true, isDemo: true, status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const rows = [];
+    let mrrKobo = 0;
+    for (const o of orgs) {
+      const sub = await ensureSubscription(this.core.prisma, o.id, now);
+      const access = getSubscriptionAccess(sub, now);
+      if (access === 'active' && sub.authorizationCode && !sub.cancelAtPeriodEnd) {
+        mrrKobo += SUBSCRIPTION_TIERS[sub.pendingTier ?? sub.tier].priceKobo;
+      }
+      const lastInvoice = await this.core.prisma.subscriptionInvoice.findFirst({
+        where: { organizationId: o.id },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true, amountKobo: true, createdAt: true, failureReason: true },
+      });
+      rows.push({
+        organization: o,
+        tier: sub.tier,
+        pendingTier: sub.pendingTier,
+        access,
+        paidThrough: subscriptionPaidThrough(sub),
+        autoRenew: !!sub.authorizationCode && !sub.cancelAtPeriodEnd,
+        failedAttempts: sub.failedAttempts,
+        lastInvoice,
+      });
+    }
+    const paid = await this.core.prisma.subscriptionInvoice.aggregate({
+      where: { status: 'PAID', paidAt: { gte: new Date(now.getTime() - 30 * 86400000) } },
+      _sum: { amountKobo: true },
+      _count: true,
+    });
+    return { mrrKobo, collected30DaysKobo: paid._sum.amountKobo ?? 0, collected30DaysCount: paid._count, rows };
+  }
+
+  @HttpCode(200)
+  @Post('organizations/:id/subscription')
+  async adjustSubscription(@Staff() s: StaffContext, @Param('id') id: string, @Body(new ZodPipe(adminSubscriptionSchema)) body: any) {
+    const org = await this.core.prisma.organization.findUnique({ where: { id } });
+    if (!org) throw new NotFoundError('Organization');
+    return adminAdjustSubscription(this.core, id, s.user.id, body);
   }
 
   @Get('integrations')

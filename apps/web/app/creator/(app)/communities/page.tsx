@@ -8,9 +8,14 @@ import { useMe } from '@/components/me-context';
 export default function Communities() {
   const me = useMe();
   const { data, error, loading, reload } = useApi<any[]>('/org/communities');
+  const { data: billing } = useApi<any>('/org/billing');
+  const atLimit = billing && billing.limits.maxCommunities !== null && billing.usage.communities >= billing.limits.maxCommunities;
   return (
     <>
-      <PageHeader title="Communities" actions={me.role === 'OWNER' ? <LinkButton href="/creator/communities/new">New community</LinkButton> : null} />
+      <PageHeader
+        title="Communities"
+        actions={me.role === 'OWNER' ? (atLimit ? <LinkButton href="/creator/billing" variant="secondary">Upgrade to add more</LinkButton> : <LinkButton href="/creator/communities/new">New community</LinkButton>) : null}
+      />
       {loading && <Loading />}
       <ErrorAlert error={error} onRetry={reload} />
       {data && !data.length && <Empty title="No communities yet" />}

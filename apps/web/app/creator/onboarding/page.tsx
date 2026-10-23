@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
-import { DEFAULT_REMINDER_SETTINGS, PLAN_DURATIONS_DAYS, slugify } from '@communitypass/shared';
+import { DEFAULT_REMINDER_SETTINGS, PLAN_DURATIONS_DAYS, SUBSCRIPTION_TIERS, SubscriptionTier, formatNgn, slugify } from '@communitypass/shared';
 import { api, ApiError, nairaInputToKobo } from '@/lib/api';
 import { Alert, Button, Card, Checkbox, Field, Select, TextArea } from '@/components/ui';
 import { ImageUpload } from '@/components/image-upload';
@@ -30,6 +30,7 @@ export default function Onboarding() {
   const [plans, setPlans] = useState<PlanDraft[]>([{ name: '30-day membership', price: '5000', durationDays: 30 }]);
   const [reminders, setReminders] = useState({ ...DEFAULT_REMINDER_SETTINGS, whatsappEnabled: true, emailEnabled: true });
   const [ack, setAck] = useState(false);
+  const [tier, setTier] = useState<SubscriptionTier>('STARTER');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<ApiError | null>(null);
 
@@ -44,6 +45,7 @@ export default function Onboarding() {
           community: { ...community, imageUrl: community.imageUrl || null, isPublished: true },
           plans: plans.map((p) => ({ name: p.name, priceKobo: nairaInputToKobo(p.price), durationDays: p.durationDays })),
           reminders,
+          tier,
           acknowledgeManualAccess: ack,
         },
       });
@@ -149,6 +151,22 @@ export default function Onboarding() {
             <Checkbox checked={reminders.onExpiry} onChange={(e) => setReminders({ ...reminders, onExpiry: e.target.checked })} label="On the day it expires" />
             <Checkbox checked={reminders.graceEnd} onChange={(e) => setReminders({ ...reminders, graceEnd: e.target.checked })} label="When the grace period ends" />
             <p className="text-sm text-gray-600">Reminders are sent between 8am and 8pm Lagos time. WhatsApp reminders only go to members who opted in.</p>
+          </div>
+        </Card>
+
+        <Card title="6. Your CommunityPass plan">
+          <p className="mb-3 text-sm text-gray-600">Start with a free 14-day trial — no card needed now. Member payments always go 100% to your bank account; this is your monthly CommunityPass subscription.</p>
+          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Plan">
+            {Object.values(SUBSCRIPTION_TIERS).map((t) => (
+              <label key={t.tier} className={`cursor-pointer rounded-lg border p-3 ${tier === t.tier ? 'border-brand-600 ring-2 ring-brand-100' : 'border-gray-200'}`}>
+                <input type="radio" name="tier" className="sr-only" checked={tier === t.tier} onChange={() => setTier(t.tier)} />
+                <span className="block font-semibold">{t.name}</span>
+                <span className="block text-sm">{formatNgn(t.priceKobo)}/month</span>
+                <span className="mt-1 block text-xs text-gray-600">
+                  {t.maxCommunities ?? 'Unlimited'} {t.maxCommunities === 1 ? 'community' : 'communities'} · {t.maxActiveMembers ?? 'Unlimited'} members · {t.whatsappReminders ? 'WhatsApp reminders' : 'Email reminders'}
+                </span>
+              </label>
+            ))}
           </div>
         </Card>
 

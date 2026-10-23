@@ -112,6 +112,8 @@ model Organization {
   consents           NotificationConsent[]
   paymentConfig      OrganizationPaymentConfig?
   reminderSettings   ReminderSettings?
+  subscription       OrganizationSubscription?
+  subscriptionInvoices SubscriptionInvoice[]
   saasBilling        SaasBillingRecord[]
   reconciliation     ReconciliationIssue[]
   auditLogs          AuditLog[]
@@ -208,6 +210,91 @@ model ReminderSettings {
   updatedAt                  DateTime     @updatedAt
 
   @@map("reminder_settings")
+}
+
+enum SubscriptionTier {
+  STARTER
+  GROWTH
+  PRO
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  PAUSED
+  CANCELLED
+}
+
+/// Creator's monthly CommunityPass subscription (paid to the platform's own Paystack account,
+/// completely separate from member payments). Access is computed from the dates; `status` is a
+/// display/notification snapshot maintained by the worker.
+model OrganizationSubscription {
+  id                   String             @id @default(cuid())
+  organizationId       String             @unique
+  organization         Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tier                 SubscriptionTier
+  /// Downgrade scheduled for the next renewal (upgrades apply immediately).
+  pendingTier          SubscriptionTier?
+  status               SubscriptionStatus @default(TRIALING)
+  trialEndsAt          DateTime
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  /// Reusable Paystack card authorization (a token, not card data). Never returned by any API.
+  authorizationCode    String?
+  billingEmail         String?
+  cardBrand            String?
+  cardLast4            String?
+  cardExpiry           String?
+  failedAttempts       Int                @default(0)
+  nextRetryAt          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("organization_subscriptions")
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+}
+
+enum InvoiceKind {
+  CHECKOUT
+  RENEWAL
+}
+
+/// One attempt to collect a month of subscription. Paid invoices extend the subscription once.
+model SubscriptionInvoice {
+  id                    String          @id @default(cuid())
+  organizationId        String
+  organization          Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind                  InvoiceKind
+  tier                  SubscriptionTier
+  amountKobo            Int
+  currency              String          @default("NGN")
+  reference             String          @unique
+  provider              PaymentProvider
+  status                InvoiceStatus   @default(PENDING)
+  /// For renewals: "<org>:<paidThrough ISO>:<attempt>" — one charge attempt per period per try.
+  renewalKey            String?         @unique
+  renewalFor            DateTime?
+  checkoutUrl           String?
+  providerTransactionId String?
+  isLive                Boolean         @default(false)
+  periodStart           DateTime?
+  periodEnd             DateTime?
+  paidAt                DateTime?
+  failureReason         String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([status, createdAt])
+  @@map("subscription_invoices")
 }
 
 enum SaasBillingStatus {
@@ -663,6 +750,7 @@ enum NotificationType {
   EXPIRY_NOTICE
   GRACE_ENDED
   CREATOR_DIGEST
+  CREATOR_BILLING
 }
 
 enum NotificationStatus {

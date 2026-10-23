@@ -6,6 +6,7 @@ export * from './adapters/payment';
 export * from './adapters/messaging';
 export * from './services/access';
 export * from './services/auth';
+export * from './services/billing';
 export * from './services/checkout';
 export * from './services/fulfillment';
 export * from './services/member-portal';

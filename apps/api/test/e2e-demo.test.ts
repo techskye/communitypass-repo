@@ -62,7 +62,29 @@ describe('E2E demo flow', () => {
     env.clock.set('2026-01-20T09:00:00Z'); // 10:00 Lagos
 
     // 1. Creator signs up and creates a community (onboarding).
-    const creator = await creatorWithOrg(app, 'e2e-fit', 'E2E Coach');
+    const creator = await creatorWithOrg(app, 'e2e-fit', 'E2E Coach', 'GROWTH');
+
+    // 1b. Creator subscribes to CommunityPass (Growth, card saved for monthly auto-renewal).
+    let billing = (await creator.get('/api/org/billing').expect(200)).body;
+    expect(billing.subscription).toMatchObject({ tier: 'GROWTH', access: 'trialing', autoRenew: false });
+    const trialEndsAt = new Date(billing.subscription.trialEndsAt);
+    const sub = (await creator.post('/api/org/billing/checkout', {}).expect(200)).body;
+    expect(sub.reference).toMatch(/^SUB-/);
+    expect(sub.checkoutUrl).toContain(`/demo-checkout/${sub.reference}`);
+    const done = await creator.post(`/api/public/demo-checkout/${sub.reference}/complete`, { outcome: 'success' }).expect(200);
+    expect(done.body.returnUrl).toContain('/creator/billing');
+    expect((await creator.post(`/api/org/billing/verify/${sub.reference}`).expect(200)).body.status).toBe('PAID');
+    billing = (await creator.get('/api/org/billing').expect(200)).body;
+    expect(billing.subscription.autoRenew).toBe(true);
+    expect(billing.subscription.card.last4).toBe('4081');
+    // Paying during the trial doesn't waste trial days: the month starts when the trial ends.
+    expect(new Date(billing.invoices[0].periodStart).toISOString()).toBe(trialEndsAt.toISOString());
+    expect(billing.whatsappAllowed).toBe(true);
+    // The creator gets a subscription receipt by email.
+    const receipt = await runWorkerDelivery();
+    expect(receipt.filter((r) => r.result === 'sent')).toHaveLength(1);
+    expect(env.email.sent.at(-1)!).toMatchObject({ to: 'e2e-fit@creator.test', subject: 'Receipt: CommunityPass Growth plan' });
+
     const pubPage = await (await agentFor(app)).get('/api/public/communities/e2e-fit').expect(200);
     expect(pubPage.body.checkoutAvailable).toBe(true);
     expect(pubPage.body.isDemoCheckout).toBe(true);

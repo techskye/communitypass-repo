@@ -59,6 +59,7 @@ async function main() {
     staffEmail?: string;
     community: { name: string; slug: string; description: string; grace: number; invite: string; instructions: string };
     plans: { name: string; priceKobo: number; durationDays: number }[];
+    subscription: { tier: 'STARTER' | 'GROWTH' | 'PRO'; paid: boolean };
   }) {
     const owner = await prisma.user.create({ data: { email: p.ownerEmail, name: p.ownerName, passwordHash: pw } });
     const org = await prisma.organization.create({
@@ -71,6 +72,22 @@ async function main() {
         staff: { create: [{ userId: owner.id, role: 'OWNER' }] },
         paymentConfig: { create: { status: 'NOT_CONFIGURED', notes: 'Demo organization — demo payments only' } },
         reminderSettings: { create: { ...DEFAULT_REMINDER_SETTINGS } },
+        subscription: {
+          create: p.subscription.paid
+            ? {
+                tier: p.subscription.tier,
+                status: 'ACTIVE',
+                trialEndsAt: new Date(realNow.getTime() - 20 * DAY_MS),
+                currentPeriodStart: new Date(realNow.getTime() - 6 * DAY_MS),
+                currentPeriodEnd: new Date(realNow.getTime() + 24 * DAY_MS),
+                authorizationCode: 'AUTH_demo_seed',
+                billingEmail: p.ownerEmail,
+                cardBrand: 'visa',
+                cardLast4: '4081',
+                cardExpiry: '12/30',
+              }
+            : { tier: p.subscription.tier, status: 'TRIALING', trialEndsAt: new Date(realNow.getTime() + 10 * DAY_MS) },
+        },
       },
     });
     if (p.staffEmail) {
@@ -119,6 +136,7 @@ async function main() {
       { name: '30-day membership', priceKobo: 500000, durationDays: 30 },
       { name: '90-day membership', priceKobo: 1350000, durationDays: 90 },
     ],
+    subscription: { tier: 'GROWTH', paid: true },
   });
   const tech = await makeOrg({
     name: 'Lagos Founders Network',
@@ -137,6 +155,7 @@ async function main() {
       { name: '30-day membership', priceKobo: 1000000, durationDays: 30 },
       { name: '365-day membership', priceKobo: 10000000, durationDays: 365 },
     ],
+    subscription: { tier: 'STARTER', paid: false },
   });
 
   async function member(orgId: string, email: string, name: string, phone: string, consent: boolean) {

@@ -175,3 +175,67 @@ export function buildDigestEmail(p: {
     html: html('Daily access tasks', lines, { label: 'Open task queue', url: p.url }),
   };
 }
+
+export function buildBillingEmail(
+  key: string,
+  p: { orgName: string; tier: string; trialEndsAt: Date; currentPeriodEnd: Date | null; cardLast4: string | null; url: string },
+) {
+  const plan = `${p.tier.charAt(0)}${p.tier.slice(1).toLowerCase()}`;
+  const when = (d: Date | null) => formatDateTime(d);
+  const texts: Record<string, { subject: string; title: string; lines: string[]; cta: string }> = {
+    trial_ending: {
+      subject: `Your CommunityPass trial ends ${when(p.trialEndsAt)}`,
+      title: 'Your free trial is ending soon',
+      lines: [
+        `Your ${plan} plan trial for ${p.orgName} ends on ${when(p.trialEndsAt)} (Lagos time).`,
+        'Add a card to keep taking member payments without interruption. Your card is charged monthly and you can cancel any time.',
+      ],
+      cta: 'Choose plan & add card',
+    },
+    payment_due: {
+      subject: 'Action needed: your CommunityPass subscription',
+      title: 'Your subscription payment is due',
+      lines: [
+        `Your trial or paid period for ${p.orgName} has ended. You have a 7-day grace period before new member payments are paused.`,
+        'Existing members keep the time they already paid for.',
+      ],
+      cta: 'Pay now',
+    },
+    payment_failed: {
+      subject: 'We could not charge your card',
+      title: 'Subscription payment failed',
+      lines: [
+        `We could not charge your card${p.cardLast4 ? ` ending ${p.cardLast4}` : ''} for your ${plan} plan. We will retry automatically.`,
+        'To avoid pausing new member payments, pay now or use a different card.',
+      ],
+      cta: 'Update payment',
+    },
+    paused: {
+      subject: 'New member payments are paused',
+      title: 'Your subscription is unpaid',
+      lines: [
+        `Your community pages for ${p.orgName} are no longer taking member payments because the subscription is unpaid.`,
+        'Existing members keep the time they paid for. Pay now to resume immediately.',
+      ],
+      cta: 'Resume subscription',
+    },
+    cancelled: {
+      subject: 'Your CommunityPass subscription has ended',
+      title: 'Subscription ended',
+      lines: [`Your subscription for ${p.orgName} has ended and new member payments are paused. You can subscribe again any time.`],
+      cta: 'Subscribe again',
+    },
+    payment_receipt: {
+      subject: `Receipt: CommunityPass ${plan} plan`,
+      title: 'Thanks — payment received',
+      lines: [`Your ${plan} plan for ${p.orgName} is paid until ${when(p.currentPeriodEnd)} (Lagos time).`],
+      cta: 'View billing',
+    },
+  };
+  const t = texts[key] ?? texts.payment_due;
+  return {
+    subject: t.subject,
+    text: `${t.lines.join('\n\n')}\n\n${p.url}`,
+    html: html(t.title, t.lines, { label: t.cta, url: p.url }),
+  };
+}

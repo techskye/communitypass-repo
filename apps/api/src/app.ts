@@ -17,6 +17,7 @@ import { WebhooksController } from './modules/webhooks.controller';
 import { OrgController } from './modules/org.controller';
 import { OperationsController } from './modules/operations.controller';
 import { AdminController } from './modules/admin.controller';
+import { BillingController } from './modules/billing.controller';
 
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
 
@@ -55,6 +56,7 @@ export async function createApp(core: CoreContext, opts: { logger?: boolean; thr
       OrgController,
       OperationsController,
       AdminController,
+      BillingController,
       UploadsController,
     ],
     providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

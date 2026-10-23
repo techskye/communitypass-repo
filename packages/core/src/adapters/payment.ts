@@ -26,6 +26,16 @@ export interface VerifiedTransaction {
   isLive: boolean;
   channel: string | null;
   feesKobo: number | null;
+  /** Reusable card authorization (for creator subscription renewals), when the provider returns one. */
+  authorization?: CardAuthorization | null;
+}
+
+export interface CardAuthorization {
+  code: string;
+  reusable: boolean;
+  brand: string | null;
+  last4: string | null;
+  expiry: string | null;
 }
 
 export interface InitializeParams {
@@ -38,6 +48,17 @@ export interface InitializeParams {
   platformFeeKobo: number;
   feeBearer: 'ACCOUNT' | 'SUBACCOUNT' | null;
   metadata: Record<string, string>;
+  /** Restrict payment channels (e.g. ['card'] so a reusable authorization is created). */
+  channels?: string[];
+}
+
+export interface ChargeAuthorizationParams {
+  reference: string;
+  email: string;
+  amountKobo: number;
+  currency: string;
+  authorizationCode: string;
+  metadata: Record<string, string>;
 }
 
 export interface InitializeResult {
@@ -49,6 +70,8 @@ export interface PaymentAdapter {
   readonly provider: 'PAYSTACK' | 'DEMO';
   initialize(p: InitializeParams): Promise<InitializeResult>;
   verify(reference: string): Promise<VerifiedTransaction>;
+  /** Charges a saved card authorization (recurring creator subscription). */
+  chargeAuthorization(p: ChargeAuthorizationParams): Promise<VerifiedTransaction>;
 }
 
 export class ProviderUnavailableError extends DomainError {
@@ -143,6 +166,7 @@ export class PaystackAdapter implements PaymentAdapter {
       callback_url: p.callbackUrl,
       metadata: p.metadata,
     };
+    if (p.channels?.length) body.channels = p.channels;
     if (p.subaccountCode) {
       body.subaccount = p.subaccountCode;
       // Explicit flat platform fee (kobo) to the main account; overrides the subaccount's
@@ -180,23 +204,53 @@ export class PaystackAdapter implements PaymentAdapter {
         feesKobo: null,
       };
     }
-    const d = json.data ?? {};
-    const paidAtRaw = d.paid_at ?? d.paidAt ?? null;
-    return {
-      provider: 'PAYSTACK',
-      status: mapPaystackStatus(d.status),
-      reference: String(d.reference ?? ''),
-      amountKobo: Number.isInteger(d.amount) ? d.amount : Number.NaN,
-      currency: String(d.currency ?? ''),
-      paidAt: paidAtRaw ? new Date(paidAtRaw) : null,
-      providerTransactionId: d.id !== undefined ? String(d.id) : '',
-      subaccountCode:
-        typeof d.subaccount?.subaccount_code === 'string' ? d.subaccount.subaccount_code : null,
-      isLive: d.domain === 'live',
-      channel: typeof d.channel === 'string' ? d.channel : null,
-      feesKobo: Number.isInteger(d.fees) ? d.fees : null,
-    };
+    return mapPaystackTransaction(json.data ?? {});
   }
+
+  /** POST /transaction/charge_authorization — charge a reusable card authorization. */
+  async chargeAuthorization(p: ChargeAuthorizationParams): Promise<VerifiedTransaction> {
+    const json = await this.call('/transaction/charge_authorization', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: p.email,
+        amount: p.amountKobo,
+        currency: p.currency,
+        authorization_code: p.authorizationCode,
+        reference: p.reference,
+        metadata: p.metadata,
+      }),
+    });
+    if (json.__notFound) throw new ProviderUnavailableError('Paystack charge endpoint not found');
+    return mapPaystackTransaction(json.data ?? {});
+  }
+}
+
+function mapPaystackTransaction(d: any): VerifiedTransaction {
+  const paidAtRaw = d.paid_at ?? d.paidAt ?? d.transaction_date ?? null;
+  const auth = d.authorization;
+  return {
+    provider: 'PAYSTACK',
+    status: mapPaystackStatus(d.status),
+    reference: String(d.reference ?? ''),
+    amountKobo: Number.isInteger(d.amount) ? d.amount : Number.NaN,
+    currency: String(d.currency ?? ''),
+    paidAt: paidAtRaw ? new Date(paidAtRaw) : null,
+    providerTransactionId: d.id !== undefined ? String(d.id) : '',
+    subaccountCode: typeof d.subaccount?.subaccount_code === 'string' ? d.subaccount.subaccount_code : null,
+    isLive: d.domain === 'live',
+    channel: typeof d.channel === 'string' ? d.channel : null,
+    feesKobo: Number.isInteger(d.fees) ? d.fees : null,
+    authorization:
+      auth && typeof auth.authorization_code === 'string'
+        ? {
+            code: auth.authorization_code,
+            reusable: auth.reusable === true,
+            brand: typeof auth.brand === 'string' ? auth.brand : typeof auth.card_type === 'string' ? auth.card_type : null,
+            last4: typeof auth.last4 === 'string' ? auth.last4 : null,
+            expiry: auth.exp_month && auth.exp_year ? `${auth.exp_month}/${String(auth.exp_year).slice(-2)}` : null,
+          }
+        : null,
+  };
 }
 
 /**
@@ -251,6 +305,25 @@ export class DemoPaymentAdapter implements PaymentAdapter {
       isLive: false,
       channel: 'demo',
       feesKobo: 0,
+      authorization:
+        t.status === 'success'
+          ? { code: `AUTH_demo_${t.id}`, reusable: true, brand: 'visa', last4: '4081', expiry: '12/30' }
+          : null,
     };
+  }
+
+  /** Demo: saved-card charges succeed unless the amount ends in 99 kobo (deterministic failure). */
+  async chargeAuthorization(p: ChargeAuthorizationParams): Promise<VerifiedTransaction> {
+    const ok = p.amountKobo % 100 !== 99;
+    await this.prisma.demoTransaction.create({
+      data: {
+        reference: p.reference,
+        amountKobo: p.amountKobo,
+        currency: p.currency,
+        status: ok ? 'success' : 'failed',
+        paidAt: ok ? new Date() : null,
+      },
+    });
+    return this.verify(p.reference);
   }
 }

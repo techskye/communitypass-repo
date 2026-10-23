@@ -3,7 +3,7 @@ import type { AppConfig } from '../config';
 import { loadConfig } from '../config';
 import type { CoreContext } from '../context';
 import { createLogger, newPaymentReference } from '../infra';
-import { DemoPaymentAdapter, PaymentAdapter, VerifiedTransaction } from '../adapters/payment';
+import { DemoPaymentAdapter, PaymentAdapter, ProviderUnavailableError, VerifiedTransaction } from '../adapters/payment';
 import { MockEmailAdapter, MockWhatsappAdapter } from '../adapters/messaging';
 
 let prisma: PrismaClient | null = null;
@@ -39,6 +39,25 @@ export class FakePaystack implements PaymentAdapter {
   verifyCalls = 0;
   async initialize(p: { reference: string }) {
     return { checkoutUrl: `https://checkout.paystack.test/${p.reference}`, accessCode: 'ac_test' };
+  }
+  /** Saved-card charges: result per reference may be preset in `charges`; default success. */
+  charges: { reference: string; amountKobo: number; authorizationCode: string }[] = [];
+  chargeResult: 'success' | 'failed' | 'throw' = 'success';
+  async chargeAuthorization(p: { reference: string; amountKobo: number; authorizationCode: string; currency: string }): Promise<VerifiedTransaction> {
+    this.charges.push(p);
+    if (this.chargeResult === 'throw') throw new ProviderUnavailableError('timeout');
+    const r: Partial<VerifiedTransaction> = {
+      status: this.chargeResult,
+      reference: p.reference,
+      amountKobo: p.amountKobo,
+      currency: p.currency,
+      paidAt: new Date(),
+      providerTransactionId: `tx_${p.reference}`,
+      isLive: true,
+      authorization: { code: p.authorizationCode, reusable: true, brand: 'visa', last4: '4081', expiry: '12/30' },
+    };
+    this.results.set(p.reference, r);
+    return this.verify(p.reference);
   }
   async verify(reference: string): Promise<VerifiedTransaction> {
     this.verifyCalls++;
@@ -94,7 +113,7 @@ export function testContext(opts: { clock?: Clock; mode?: 'demo' | 'live'; confi
 
 export async function seedOrg(
   db: PrismaClient,
-  p: { name: string; slug: string; graceDays?: number; priceKobo?: number; durationDays?: number },
+  p: { name: string; slug: string; graceDays?: number; priceKobo?: number; durationDays?: number; tier?: 'STARTER' | 'GROWTH' | 'PRO' },
 ) {
   const owner = await db.user.create({
     data: { email: `${p.slug}-owner@example.com`, name: `${p.name} Owner`, passwordHash: 'x' },
@@ -110,6 +129,15 @@ export async function seedOrg(
         create: { status: 'ACTIVE', subaccountCode: `ACCT_${p.slug.replace(/-/g, '')}`, platformFeeBps: 500, feeBearer: 'SUBACCOUNT' },
       },
       reminderSettings: { create: { sendWindowStartHour: 0, sendWindowEndHour: 24, maxMessagesPerMemberPerDay: 5 } },
+      // Paid Growth subscription well beyond any test clock, so billing doesn't interfere.
+      subscription: {
+        create: {
+          tier: p.tier ?? 'GROWTH',
+          status: 'ACTIVE',
+          trialEndsAt: new Date('2026-01-01T00:00:00Z'),
+          currentPeriodEnd: new Date('2030-01-01T00:00:00Z'),
+        },
+      },
     },
   });
   const community = await db.community.create({

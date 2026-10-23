@@ -4,6 +4,7 @@ import type { CoreContext } from '../context';
 import { audit, DomainError, newPaymentReference, NotFoundError } from '../infra';
 import { WHATSAPP_SERVICE_SCOPE } from './notifications';
 import { fulfillVerifiedTransaction, verifyAndFulfill } from './fulfillment';
+import { applySubscriptionPayment, getOrgEntitlements, memberLimitReached } from './billing';
 
 export async function getPaymentReadiness(ctx: CoreContext, organizationId: string) {
   const org = await ctx.prisma.organization.findUniqueOrThrow({
@@ -11,6 +12,10 @@ export async function getPaymentReadiness(ctx: CoreContext, organizationId: stri
     include: { paymentConfig: true },
   });
   if (org.status !== 'ACTIVE') return { ready: false, provider: null, reason: 'Organization is suspended' } as const;
+  const ent = await getOrgEntitlements(ctx.prisma, organizationId, ctx.now());
+  if (!ent.paymentsAllowed) {
+    return { ready: false, provider: null, reason: 'This creator is not accepting payments right now' } as const;
+  }
   if (ctx.config.appMode === 'demo') return { ready: true, provider: 'DEMO' as const, reason: 'Demo mode' };
   if (org.isDemo) return { ready: false, provider: null, reason: 'Demo organizations cannot take live payments' } as const;
   if (!ctx.adapters.payments.PAYSTACK) return { ready: false, provider: null, reason: 'Payments are not configured on this platform' } as const;
@@ -103,6 +108,16 @@ export async function startCheckout(ctx: CoreContext, input: CheckoutStartInput)
     throw new DomainError(
       'PLAN_SWITCH_NOT_SUPPORTED',
       'You already have an active membership on a different plan. Switching plans is not available yet — you can renew your current plan.',
+      409,
+    );
+  }
+
+  // Plan limit: block NEW paid members at the active-member limit; current members can still renew.
+  const isRenewal = !!membership?.paidUntil && membership.paidUntil.getTime() > now.getTime();
+  if (!isRenewal && (await memberLimitReached(ctx.prisma, org.id, now))) {
+    throw new DomainError(
+      'MEMBER_LIMIT_REACHED',
+      'This community is not accepting new members right now. Please contact the creator.',
       409,
     );
   }
@@ -210,6 +225,7 @@ export async function simulateDemoCheckout(
   outcome: 'success' | 'failed' | 'wrong_amount',
 ) {
   if (ctx.config.appMode !== 'demo') throw new DomainError('DEMO_ONLY', 'Demo checkout is disabled', 403);
+  if (reference.startsWith('SUB-')) return simulateDemoSubscriptionCheckout(ctx, reference, outcome);
   const order = await ctx.prisma.order.findUnique({ where: { reference } });
   if (!order || order.provider !== 'DEMO') throw new NotFoundError('Demo order');
   const tx = await ctx.prisma.demoTransaction.findUnique({ where: { reference } });
@@ -236,5 +252,44 @@ export async function simulateDemoCheckout(
     update: {},
   });
   await fulfillVerifiedTransaction(ctx, reference, v, 'WEBHOOK');
-  return { status: v.status };
+  return { status: v.status, returnUrl: `/payment/callback?reference=${encodeURIComponent(reference)}` };
+}
+
+async function simulateDemoSubscriptionCheckout(ctx: CoreContext, reference: string, outcome: 'success' | 'failed' | 'wrong_amount') {
+  const inv = await ctx.prisma.subscriptionInvoice.findUnique({ where: { reference } });
+  const t = await ctx.prisma.demoTransaction.findUnique({ where: { reference } });
+  if (!inv || inv.provider !== 'DEMO' || !t) throw new NotFoundError('Demo invoice');
+  const returnUrl = `/creator/billing?reference=${encodeURIComponent(reference)}`;
+  if (t.status !== 'pending') return { status: t.status, returnUrl };
+  await ctx.prisma.demoTransaction.update({
+    where: { reference },
+    data: {
+      status: outcome === 'failed' ? 'failed' : 'success',
+      paidAt: outcome === 'failed' ? null : ctx.now(),
+      amountKobo: outcome === 'wrong_amount' ? t.amountKobo - 5000 : t.amountKobo,
+    },
+  });
+  const v = await ctx.adapters.payments.DEMO!.verify(reference);
+  await applySubscriptionPayment(ctx, reference, v);
+  return { status: v.status, returnUrl };
+}
+
+/** Demo hosted-checkout page data for either a member order or a creator subscription invoice. */
+export async function getDemoCheckout(ctx: CoreContext, reference: string) {
+  if (ctx.config.appMode !== 'demo') throw new NotFoundError('Demo checkout');
+  const t = await ctx.prisma.demoTransaction.findUnique({ where: { reference } });
+  if (reference.startsWith('SUB-')) {
+    const inv = await ctx.prisma.subscriptionInvoice.findUnique({ where: { reference } });
+    if (!inv || inv.provider !== 'DEMO') throw new NotFoundError('Demo invoice');
+    return {
+      reference,
+      communityName: 'CommunityPass subscription',
+      planName: `${inv.tier.charAt(0)}${inv.tier.slice(1).toLowerCase()} plan (1 month)`,
+      amountKobo: inv.amountKobo,
+      demoStatus: t?.status ?? 'missing',
+    };
+  }
+  const order = await getPublicOrderStatus(ctx, reference);
+  if (!order.isDemo) throw new NotFoundError('Demo checkout');
+  return { ...order, demoStatus: t?.status ?? 'missing' };
 }

@@ -19,6 +19,7 @@ const NAV: [string, string][] = [
   ['/creator/messages', 'Messages'],
   ['/creator/staff', 'Team'],
   ['/creator/integrations', 'Integrations'],
+  ['/creator/billing', 'Billing'],
   ['/creator/settings', 'Settings'],
 ];
 

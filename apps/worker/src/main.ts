@@ -10,6 +10,7 @@ const SCHEDULES: { id: string; job: string; every?: number; pattern?: string; tz
   { id: 'reconcile', job: JOBS.reconcilePayments, every: 5 * 60_000 },
   { id: 'sweep-events', job: JOBS.sweepEvents, every: 60_000 },
   { id: 'stuck-sends', job: JOBS.flagStuckSends, every: 5 * 60_000 },
+  { id: 'subscription-billing', job: JOBS.subscriptionBilling, every: 15 * 60_000 },
   { id: 'digest', job: JOBS.creatorDigest, pattern: '0 7 * * *', tz: 'Africa/Lagos' },
 ];
 

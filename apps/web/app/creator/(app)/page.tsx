@@ -7,12 +7,27 @@ import { Alert, Card, ErrorAlert, Loading, PageHeader, Stat } from '@/components
 
 export default function Dashboard() {
   const { data, error, loading, reload } = useApi<any>('/org/dashboard');
+  const { data: billing } = useApi<any>('/org/billing');
   if (loading) return <Loading />;
   if (error) return <ErrorAlert error={error} onRetry={reload} />;
   const m = data.metrics;
   return (
     <>
       <PageHeader title={`Welcome, ${data.organization.displayName}`} subtitle="All figures come from confirmed records in CommunityPass." />
+      {billing && billing.subscription.access === 'trialing' && !billing.subscription.card && (
+        <div className="mb-4">
+          <Alert kind="info" title={`Free trial — ends ${new Date(billing.subscription.trialEndsAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}`}>
+            You&apos;re on the {billing.subscription.tier.charAt(0) + billing.subscription.tier.slice(1).toLowerCase()} plan. <Link href="/creator/billing" className="underline">Add a card</Link> to keep taking member payments after your trial.
+          </Alert>
+        </div>
+      )}
+      {billing && ['past_due', 'paused', 'cancelled'].includes(billing.subscription.access) && (
+        <div className="mb-4">
+          <Alert kind={billing.subscription.access === 'past_due' ? 'warning' : 'error'} title={billing.subscription.access === 'past_due' ? 'Subscription payment overdue' : 'New member payments are paused'}>
+            <Link href="/creator/billing" className="underline">Go to Billing</Link> to pay and keep your community pages taking payments.
+          </Alert>
+        </div>
+      )}
       {!data.payments.ready && (
         <div className="mb-4">
           <Alert kind="warning" title="Payments are not live yet">
